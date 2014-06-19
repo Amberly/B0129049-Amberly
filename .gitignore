@@ -1,0 +1,436 @@
+# Ink Spill (a Flood It clone)
+# http://inventwithpython.com/pygame
+# By Al Sweigart al@inventwithpython.com
+# Released under a "Simplified BSD" license
+
+import random, sys, webbrowser, copy, pygame
+from pygame.locals import *
+
+# There are different box sizes, number of boxes, and
+# 生命 depending on the "版面 size" setting selected.
+小箱子  = 60 # size is in pixels
+中箱子 = 20
+大箱子  = 11
+
+小版面  = 6 # size is in boxes
+中版面 = 17
+大版面  = 30
+
+小生命值  = 10 # number of turns
+中生命值 = 30
+大生命值  = 64
+
+更新 = 30
+視窗寬 = 640
+視窗高 = 480
+箱子大小 = 中箱子
+調色盤間距 = 10
+調色盤大小 = 45
+簡單 = 0   # arbitrary but unique value
+中等 = 1 # arbitrary but unique value
+困難 = 2   # arbitrary but unique value
+
+難度 = 中等 # game starts in "中等" mode
+生命值 = 中生命值
+版面寬 = 中版面
+版面高 = 中版面
+
+
+#            R    G    B
+白    = (255, 255, 255)
+深灰 = ( 70,  70,  70)
+黑    = (  0,   0,   0)
+紅      = (255,   0,   0)
+綠    = (  0, 255,   0)
+藍     = (  0,   0, 255)
+黃   = (255, 255,   0)
+橘   = (255, 128,   0)
+紫   = (255,   0, 255)
+
+# The first 色 in each scheme is the background 色, the next six are the palette colors.
+顏色系統 = (((150, 200, 255), 紅, 綠, 藍, 黃, 橘, 紫),
+                ((0, 155, 104),  (97, 215, 164),  (228, 0, 69),  (0, 125, 50),   (204, 246, 0),   (148, 0, 45),    (241, 109, 149)),
+                ((195, 179, 0),  (255, 239, 115), (255, 226, 0), (147, 3, 167),  (24, 38, 176),   (166, 147, 0),   (197, 97, 211)),
+                ((85, 0, 0),     (155, 39, 102),  (0, 201, 13),  (255, 118, 0),  (206, 0, 113),   (0, 130, 9),     (255, 180, 115)),
+                ((191, 159, 64), (183, 182, 208), (4, 31, 183),  (167, 184, 45), (122, 128, 212), (37, 204, 7),    (88, 155, 213)),
+                ((200, 33, 205), (116, 252, 185), (68, 56, 56),  (52, 238, 83),  (23, 149, 195),  (222, 157, 227), (212, 86, 185)))
+for 某數 in range(len(顏色系統)):
+    assert len(顏色系統[某數]) == 7, '色 scheme %s does not have exactly 7 colors.' % (某數)
+顏色 = 顏色系統[0][0]
+調色盤顏色 =  顏色系統[0][1:]
+
+def main():
+    global 更新時間, 顯示動作, 標誌圖片, 點圖片, 設定圖片, 設定按鈕圖片, 重設按鈕圖片
+
+    pygame.init()
+    更新時間 = pygame.time.Clock()
+    顯示動作 = pygame.display.set_mode((視窗寬, 視窗高))
+
+    # Load images
+    標誌圖片 = pygame.image.load('inkspilllogo.png')
+    點圖片 = pygame.image.load('inkspillspot.png')
+    設定圖片 = pygame.image.load('inkspillsettings.png')
+    設定按鈕圖片 = pygame.image.load('inkspillsettingsbutton.png')
+    重設按鈕圖片 = pygame.image.load('inkspillresetbutton.png')
+
+    pygame.display.set_caption('Ink Spill')
+    滑鼠一 = 0
+    滑鼠二 = 0
+    主要版面 = 產生亂數版面(版面寬, 版面高, 難度)
+    生命 = 生命值
+    最後調色盤點擊 = None
+
+    while True: # main game loop
+        調色盤點擊 = None
+        重設遊戲 = False
+
+        # Draw the screen.
+        顯示動作.fill(顏色)
+        畫標誌及按鈕()
+        畫版面(主要版面)
+        畫生命長度(生命)
+        畫調色盤()
+
+        確認離開()
+        for event in pygame.event.get(): # event handling loop
+            if event.type == MOUSEBUTTONUP:
+                滑鼠一, 滑鼠二 = event.pos
+                if pygame.Rect(視窗寬 - 設定按鈕圖片.get_width(),
+                               視窗高 - 設定按鈕圖片.get_height(),
+                               設定按鈕圖片.get_width(),
+                               設定按鈕圖片.get_height()).collidepoint(滑鼠一, 滑鼠二):
+                    重設遊戲 = 秀出設定螢幕() # clicked on Settings button
+                elif pygame.Rect(視窗寬 - 重設按鈕圖片.get_width(),
+                                 視窗高 - 設定按鈕圖片.get_height() - 重設按鈕圖片.get_height(),
+                                 重設按鈕圖片.get_width(),
+                                 重設按鈕圖片.get_height()).collidepoint(滑鼠一, 滑鼠二):
+                    重設遊戲 = True # clicked on Reset button
+                else:
+                    # check if a palette button was clicked
+                    調色盤點擊 = 取得調色盤顏色(滑鼠一, 滑鼠二)
+
+        if 調色盤點擊 != None and 調色盤點擊 != 最後調色盤點擊:
+            # a palette button was clicked that is different from the
+            # last palette button clicked (this check prevents the player
+            # from accidentally clicking the same palette twice)
+            最後調色盤點擊 = 調色盤點擊
+            充滿動畫(主要版面, 調色盤點擊)
+            生命 -= 1
+
+            重設遊戲 = False
+            if 贏了(主要版面):
+                for 某數 in range(4): # flash border 4 times
+                    閃爍邊界動畫(白, 主要版面)
+                重設遊戲 = True
+                pygame.time.wait(2000) # pause so the player can bask in victory
+            elif 生命 == 0:
+                # 生命 is zero, so player has lost
+                畫生命長度(0)
+                pygame.display.update()
+                pygame.time.wait(400)
+                for 某數 in range(4):
+                    閃爍邊界動畫(黑, 主要版面)
+                重設遊戲 = True
+                pygame.time.wait(2000) # pause so the player can suffer in their defeat
+
+        if 重設遊戲:
+            # 開始 a new game
+            主要版面 = 產生亂數版面(版面寬, 版面高, 難度)
+            生命 = 生命值
+            最後調色盤點擊 = None
+
+        pygame.display.update()
+        更新時間.tick(更新)
+
+
+def 確認離開():
+    # Terminates the program if there are any QUIT or escape key events.
+    for event in pygame.event.get(QUIT): # get all the QUIT events
+        pygame.quit() # terminate if any QUIT events are present
+        sys.exit()
+    for event in pygame.event.get(KEYUP): # get all the KEYUP events
+        if event.key == K_ESCAPE:
+            pygame.quit() # terminate if the KEYUP event was for the Esc key
+            sys.exit()
+        pygame.event.post(event) # put the other KEYUP event objects back
+
+
+def 贏了(版面):
+    # if the entire 版面 is the same 色, player has won
+    for 未知數一 in range(版面寬):
+        for 未知數二 in range(版面高):
+            if 版面[未知數一][未知數二] != 版面[0][0]:
+                return False # found a different 色, player has not won
+    return True
+
+
+def 秀出設定螢幕():
+    global 難度, 箱子大小, 版面寬, 版面高, 生命值, 調色盤顏色, 顏色
+
+    # The pixel coordinates in this function were obtained by loading
+    # the inkspillsettings.png image into a graphics editor and reading
+    # the pixel coordinates from there. Handy trick.
+
+    原始難度 = 難度
+    原始箱子大小 = 箱子大小
+    螢幕需要重畫 = True
+
+    while True:
+        if 螢幕需要重畫:
+            顯示動作.fill(顏色)
+            顯示動作.blit(設定圖片, (0,0))
+
+            # place the ink spot marker next to the selected 難度
+            if 難度 == 簡單:
+                顯示動作.blit(點圖片, (30, 4))
+            if 難度 == 中等:
+                顯示動作.blit(點圖片, (8, 41))
+            if 難度 == 困難:
+                顯示動作.blit(點圖片, (30, 76))
+
+            # place the ink spot marker next to the selected size
+            if 箱子大小 == 小箱子:
+                顯示動作.blit(點圖片, (22, 150))
+            if 箱子大小 == 中箱子:
+                顯示動作.blit(點圖片, (11, 185))
+            if 箱子大小 == 大箱子:
+                顯示動作.blit(點圖片, (24, 220))
+
+            for 某數 in range(len(顏色系統)):
+                畫箱子系統顏色(500, 某數 * 60 + 30, 某數)
+
+            pygame.display.update()
+
+        螢幕需要重畫 = False # by default, don't redraw the screen
+        for event in pygame.event.get(): # event handling loop
+            if event.type == QUIT:
+                pygame.quit()
+                sys.exit()
+            elif event.type == KEYUP:
+                if event.key == K_ESCAPE:
+                    # Esc key on settings screen goes back to game
+                    return not (原始難度 == 難度 and 原始箱子大小 == 箱子大小)
+            elif event.type == MOUSEBUTTONUP:
+                螢幕需要重畫 = True # screen should be redrawn
+                滑鼠一, 滑鼠二 = event.pos # syntactic sugar
+
+                # check for clicks on the 難度 buttons
+                if pygame.Rect(74, 16, 111, 30).collidepoint(滑鼠一, 滑鼠二):
+                    難度 = 簡單
+                elif pygame.Rect(53, 50, 104, 29).collidepoint(滑鼠一, 滑鼠二):
+                    難度 = 中等
+                elif pygame.Rect(72, 85, 65, 31).collidepoint(滑鼠一, 滑鼠二):
+                    難度 = 困難
+
+                # check for clicks on the size buttons
+                elif pygame.Rect(63, 156, 84, 31).collidepoint(滑鼠一, 滑鼠二):
+                    # small 版面 size setting:
+                    箱子大小 = 小箱子
+                    版面寬 = 小版面
+                    版面高 = 小版面
+                    生命值 = 小生命值
+                elif pygame.Rect(52, 192, 106,32).collidepoint(滑鼠一, 滑鼠二):
+                    # 中等 版面 size setting:
+                    箱子大小 = 中箱子
+                    版面寬 = 中版面
+                    版面高 = 中版面
+                    生命值 = 中生命值
+                elif pygame.Rect(67, 228, 58, 37).collidepoint(滑鼠一, 滑鼠二):
+                    # large 版面 size setting:
+                    箱子大小 = 大箱子
+                    版面寬 = 大版面
+                    版面高 = 大版面
+                    生命值 = 大生命值
+                elif pygame.Rect(14, 299, 371, 97).collidepoint(滑鼠一, 滑鼠二):
+                    # clicked on the "learn programming" ad
+                    webbrowser.open('http://inventwithpython.com') # opens a web browser
+                elif pygame.Rect(178, 418, 215, 34).collidepoint(滑鼠一, 滑鼠二):
+                    # clicked on the "back to game" button
+                    return not (原始難度 == 難度 and 原始箱子大小 == 箱子大小)
+
+                for 某數 in range(len(顏色系統)):
+                    # clicked on a 色 scheme button
+                    if pygame.Rect(500, 30 + 某數 * 60, 中箱子 * 3, 中箱子 * 2).collidepoint(滑鼠一, 滑鼠二):
+                        顏色 = 顏色系統[某數][0]
+                        調色盤顏色  = 顏色系統[某數][1:]
+
+
+def 畫箱子系統顏色(未知數一, 未知數二, 系統編號):
+    # Draws the 色 scheme boxes that appear on the "Settings" screen.
+    for 箱子二 in range(2):
+        for 箱子一 in range(3):
+            pygame.draw.rect(顯示動作, 顏色系統[系統編號][3 * 箱子二 + 箱子一 + 1], (未知數一 + 中箱子 * 箱子一, 未知數二 + 中箱子 * 箱子二, 中箱子, 中箱子))
+            if 調色盤顏色 == 顏色系統[系統編號][1:]:
+                # put the ink spot next to the selected 色 scheme
+                顯示動作.blit(點圖片, (未知數一 - 50, 未知數二))
+
+
+def 閃爍邊界動畫(色, 版面, 動畫速度=30):
+    原始動作 = 顯示動作.copy()
+    閃鑠動作 = pygame.Surface(顯示動作.get_size())
+    閃鑠動作 = 閃鑠動作.convert_alpha()
+    for 開始, 結束, 步驟 in ((0, 256, 1), (255, 0, -1)):
+        # the first iteration on the outer loop will set the inner loop
+        # to have 透明 go from 0 to 255, the second iteration will
+        # have it go from 255 to 0. This is the "flash".
+        for 透明 in range(開始, 結束, 動畫速度 * 步驟):
+            顯示動作.blit(原始動作, (0, 0))
+            r, g, b = 色
+            閃鑠動作.fill((r, g, b, 透明))
+            顯示動作.blit(閃鑠動作, (0, 0))
+            畫版面(版面) # draw 版面 ON 上 OF the 透明 layer
+            pygame.display.update()
+            更新時間.tick(更新)
+    顯示動作.blit(原始動作, (0, 0)) # redraw the original surface
+
+
+def 充滿動畫(版面, 調色盤點擊, 動畫速度=25):
+    原始版面 = copy.deepcopy(版面)
+    完全充滿(版面, 版面[0][0], 調色盤點擊, 0, 0)
+
+    for 透明 in range(0, 255, 動畫速度):
+        # The "new" 版面 slowly become opaque over the original 版面.
+        畫版面(原始版面)
+        畫版面(版面, 透明)
+        pygame.display.update()
+        更新時間.tick(更新)
+
+
+def 產生亂數版面(寬, 高, 難度=中等):
+    # Creates a 版面 data structure with random colors for each box.
+    版面 = []
+    for 未知數一 in range(寬):
+        column = []
+        for 未知數二 in range(高):
+            column.append(random.randint(0, len(調色盤顏色) - 1))
+        版面.append(column)
+
+    # Make 版面 easier by setting some boxes to same 色 as a neighbor.
+
+    # Determine how many boxes to change.
+    if 難度 == 簡單:
+        if 箱子大小 == 小箱子:
+            換箱子 = 100
+        else:
+            換箱子 = 1500
+    elif 難度 == 中等:
+        if 箱子大小 == 小箱子:
+            換箱子 = 5
+        else:
+            換箱子 = 200
+    else:
+        換箱子 = 0
+
+    # Change neighbor's colors:
+    for 某數 in range(換箱子):
+        # Randomly choose a box whose 色 to copy
+        未知數一 = random.randint(1, 寬-2)
+        未知數二 = random.randint(1, 高-2)
+
+        # Randomly choose neighbors to change.
+        指示 = random.randint(0, 3)
+        if 指示 == 0: # change 左 and up neighbor
+            版面[未知數一-1][未知數二] == 版面[未知數一][未知數二]
+            版面[未知數一][未知數二-1] == 版面[未知數一][未知數二]
+        elif 指示 == 1: # change right and down neighbor
+            版面[未知數一+1][未知數二] == 版面[未知數一][未知數二]
+            版面[未知數一][未知數二+1] == 版面[未知數一][未知數二]
+        elif 指示 == 2: # change right and up neighbor
+            版面[未知數一][未知數二-1] == 版面[未知數一][未知數二]
+            版面[未知數一+1][未知數二] == 版面[未知數一][未知數二]
+        else: # change 左 and down neighbor
+            版面[未知數一][未知數二+1] == 版面[未知數一][未知數二]
+            版面[未知數一-1][未知數二] == 版面[未知數一][未知數二]
+    return 版面
+
+
+def 畫標誌及按鈕():
+    # draw the Ink Spill logo and Settings and Reset buttons.
+    顯示動作.blit(標誌圖片, (視窗寬 - 標誌圖片.get_width(), 0))
+    顯示動作.blit(設定按鈕圖片, (視窗寬 - 設定按鈕圖片.get_width(), 視窗高 - 設定按鈕圖片.get_height()))
+    顯示動作.blit(重設按鈕圖片, (視窗寬 - 重設按鈕圖片.get_width(), 視窗高 - 設定按鈕圖片.get_height() - 重設按鈕圖片.get_height()))
+
+
+def 畫版面(版面, 透明=255):
+    # The colored squares are drawn to a temporary surface which is then
+    # drawn to the 顯示動作 surface. This is done so we can draw the
+    # squares with 透明 on 上 of 顯示動作 as it currently is.
+    暫時動作 = pygame.Surface(顯示動作.get_size())
+    暫時動作 = 暫時動作.convert_alpha()
+    暫時動作.fill((0, 0, 0, 0))
+
+    for 未知數一 in range(版面寬):
+        for 未知數二 in range(版面高):
+            左, 上 = 從左上開始(未知數一, 未知數二)
+            r, g, b = 調色盤顏色[版面[未知數一][未知數二]]
+            pygame.draw.rect(暫時動作, (r, g, b, 透明), (左, 上, 箱子大小, 箱子大小))
+    左, 上 = 從左上開始(0, 0)
+    pygame.draw.rect(暫時動作, 黑, (左-1, 上-1, 箱子大小 * 版面寬 + 1, 箱子大小 * 版面高 + 1), 1)
+    顯示動作.blit(暫時動作, (0, 0))
+
+
+def 畫調色盤():
+    # Draws the six 色 palettes at the bottom of the screen.
+    顏色編號 = len(調色盤顏色)
+    xmargin = int((視窗寬 - ((調色盤大小 * 顏色編號) + (調色盤間距 * (顏色編號 - 1)))) / 2)
+    for 某數 in range(顏色編號):
+        左 = xmargin + (某數 * 調色盤大小) + (某數 * 調色盤間距)
+        上 = 視窗高 - 調色盤大小 - 10
+        pygame.draw.rect(顯示動作, 調色盤顏色[某數], (左, 上, 調色盤大小, 調色盤大小))
+        pygame.draw.rect(顯示動作, 顏色,   (左 + 2, 上 + 2, 調色盤大小 - 4, 調色盤大小 - 4), 2)
+
+
+def 畫生命長度(現在生命):
+    生命箱大小 = int((視窗高 - 40) / 生命值)
+
+    # Draw background 色 of 生命 meter.
+    pygame.draw.rect(顯示動作, 顏色, (20, 20, 20, 20 + (生命值 * 生命箱大小)))
+
+    for 某數 in range(生命值):
+        if 現在生命 >= (生命值 - 某數): # draw a solid 紅 box
+            pygame.draw.rect(顯示動作, 紅, (20, 20 + (某數 * 生命箱大小), 20, 生命箱大小))
+        pygame.draw.rect(顯示動作, 白, (20, 20 + (某數 * 生命箱大小), 20, 生命箱大小), 1) # draw 白 outline
+
+
+def 取得調色盤顏色(未知數一, 未知數二):
+    # Returns the index of the 色 in 調色盤顏色 that the 未知數一 and 未知數二 parameters
+    # are over. Returns None if 未知數一 and 未知數二 are not over any palette.
+    顏色編號 = len(調色盤顏色)
+    xmargin = int((視窗寬 - ((調色盤大小 * 顏色編號) + (調色盤間距 * (顏色編號 - 1)))) / 2)
+    上 = 視窗高 - 調色盤大小 - 10
+    for 某數 in range(顏色編號):
+        # Find out if the mouse click is inside any of the palettes.
+        左 = xmargin + (某數 * 調色盤大小) + (某數 * 調色盤間距)
+        r = pygame.Rect(左, 上, 調色盤大小, 調色盤大小)
+        if r.collidepoint(未知數一, 未知數二):
+            return 某數
+    return None # no palette exists at these 未知數一, 未知數二 coordinates
+
+
+def 完全充滿(版面, 舊顏色, 新顏色, 未知數一, 未知數二):
+    # This is the flood fill algorithm.
+    if 舊顏色 == 新顏色 or 版面[未知數一][未知數二] != 舊顏色:
+        return
+
+    版面[未知數一][未知數二] = 新顏色 # change the 色 of the current box
+
+    # Make the recursive call for any neighboring boxes:
+    if 未知數一 > 0:
+        完全充滿(版面, 舊顏色, 新顏色, 未知數一 - 1, 未知數二) # on box to the 左
+    if 未知數一 < 版面寬 - 1:
+        完全充滿(版面, 舊顏色, 新顏色, 未知數一 + 1, 未知數二) # on box to the right
+    if 未知數二 > 0:
+        完全充滿(版面, 舊顏色, 新顏色, 未知數一, 未知數二 - 1) # on box to up
+    if 未知數二 < 版面高 - 1:
+        完全充滿(版面, 舊顏色, 新顏色, 未知數一, 未知數二 + 1) # on box to down
+
+
+def 從左上開始(箱子一, 箱子二):
+    # Returns the 未知數一 and 未知數二 of the 左-topmost pixel of the xth & yth box.
+    xmargin = int((視窗寬 - (版面寬 * 箱子大小)) / 2)
+    ymargin = int((視窗高 - (版面高 * 箱子大小)) / 2)
+    return (箱子一 * 箱子大小 + xmargin, 箱子二 * 箱子大小 + ymargin)
+
+
+if __name__ == '__main__':
+    main()
